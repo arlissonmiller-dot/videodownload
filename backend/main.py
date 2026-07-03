@@ -18,6 +18,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 app = FastAPI(title="Video Downloader API")
@@ -47,6 +48,7 @@ app.add_middleware(
 )
 
 APP_DIR = Path(__file__).parent
+FRONTEND_DIST_DIR = APP_DIR.parent / "frontend" / "dist"
 DOWNLOADS_DIR = APP_DIR / "downloads"
 DOWNLOADS_DIR.mkdir(exist_ok=True)
 JOBS_DB_PATH = APP_DIR / "jobs.db"
@@ -1591,3 +1593,28 @@ def download_video(
         logger.exception("Unexpected error in direct download endpoint")
         shutil.rmtree(tmpdir, ignore_errors=True)
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+if (FRONTEND_DIST_DIR / "assets").exists():
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST_DIR / "assets"), name="assets")
+
+
+@app.get("/")
+def serve_frontend_index():
+    index_path = FRONTEND_DIST_DIR / "index.html"
+    if not index_path.exists():
+        raise HTTPException(status_code=404, detail="Frontend build nao encontrado")
+    return FileResponse(index_path)
+
+
+@app.get("/{full_path:path}")
+def serve_frontend_route(full_path: str):
+    index_path = FRONTEND_DIST_DIR / "index.html"
+    candidate_path = FRONTEND_DIST_DIR / full_path
+
+    if candidate_path.is_file():
+        return FileResponse(candidate_path)
+    if index_path.exists():
+        return FileResponse(index_path)
+
+    raise HTTPException(status_code=404, detail="Frontend build nao encontrado")
