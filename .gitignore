@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Node/Vite
+node_modules/
+dist/
+
+# Runtime data
+backend/downloads/
+backend/jobs.db
+backend/cookies.txt
+
+# OS/editor
+.DS_Store
