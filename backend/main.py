@@ -584,6 +584,12 @@ def extract_video_formats(data: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def is_running_in_container() -> bool:
+    if os.getenv("APP_CONTAINERIZED") == "1":
+        return True
+
+    if any(key.startswith("RAILWAY_") for key in os.environ):
+        return True
+
     if Path("/.dockerenv").exists():
         return True
 

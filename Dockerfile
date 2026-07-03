@@ -10,6 +10,7 @@ RUN npm run build
 FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1
+ENV APP_CONTAINERIZED=1
 ENV PORT=8000
 
 RUN apt-get update \
