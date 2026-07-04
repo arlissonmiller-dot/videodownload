@@ -89,13 +89,31 @@ download_jobs_lock = threading.Lock()
 download_semaphore = threading.BoundedSemaphore(MAX_CONCURRENT_DOWNLOADS)
 
 
+def normalize_cookie_content(raw_cookies: str) -> str:
+    content = raw_cookies.strip()
+
+    if (
+        len(content) >= 2
+        and content[0] == content[-1]
+        and content[0] in {"'", '"'}
+    ):
+        content = content[1:-1].strip()
+
+    if "\\n" in content and "\n" not in content:
+        content = content.replace("\\r\\n", "\n").replace("\\n", "\n")
+    if "\\t" in content and "\t" not in content:
+        content = content.replace("\\t", "\t")
+
+    return content.strip() + "\n"
+
+
 def ensure_env_cookies_file() -> Path | None:
     raw_cookies = os.getenv("YTDLP_COOKIES_CONTENT")
     encoded_cookies = os.getenv("YTDLP_COOKIES_BASE64")
 
     if not raw_cookies and encoded_cookies:
         try:
-            raw_cookies = base64.b64decode(encoded_cookies).decode("utf-8")
+            raw_cookies = base64.b64decode("".join(encoded_cookies.split())).decode("utf-8")
         except (ValueError, UnicodeDecodeError):
             logger.warning("YTDLP_COOKIES_BASE64 is invalid and will be ignored")
             return None
@@ -103,7 +121,7 @@ def ensure_env_cookies_file() -> Path | None:
     if not raw_cookies:
         return None
 
-    ENV_COOKIES_FILE.write_text(raw_cookies.strip() + "\n")
+    ENV_COOKIES_FILE.write_text(normalize_cookie_content(raw_cookies))
     ENV_COOKIES_FILE.chmod(0o600)
     return ENV_COOKIES_FILE
 
@@ -111,9 +129,39 @@ def ensure_env_cookies_file() -> Path | None:
 def get_cookies_file() -> Path | None:
     if COOKIES_FILE.exists():
         return COOKIES_FILE
+    if os.getenv("YTDLP_COOKIES_CONTENT") or os.getenv("YTDLP_COOKIES_BASE64"):
+        return ensure_env_cookies_file()
     if ENV_COOKIES_FILE.exists():
         return ENV_COOKIES_FILE
     return ensure_env_cookies_file()
+
+
+def describe_cookies_file(cookies_file: Path | None) -> dict[str, Any]:
+    if not cookies_file or not cookies_file.exists():
+        return {"loaded": False, "lines": 0, "domains": []}
+
+    try:
+        lines = cookies_file.read_text().splitlines()
+    except OSError:
+        return {"loaded": False, "lines": 0, "domains": []}
+
+    domains = sorted(
+        {
+            parts[0].lstrip(".")
+            for line in lines
+            if line.strip() and not line.startswith("#")
+            for parts in [line.split("\t")]
+            if len(parts) >= 7 and parts[0]
+        }
+    )
+
+    return {
+        "loaded": True,
+        "lines": len(lines),
+        "domains": domains[:8],
+        "has_youtube": any("youtube.com" in domain or "google.com" in domain for domain in domains),
+        "has_instagram": any("instagram.com" in domain for domain in domains),
+    }
 
 
 class DownloadJobRequest(BaseModel):
@@ -634,6 +682,7 @@ def is_running_in_container() -> bool:
 
 def get_runtime_config() -> dict[str, Any]:
     cookies_file = get_cookies_file()
+    cookie_status = describe_cookies_file(cookies_file)
     if cookies_file:
         cookie_source = "backend/cookies.txt" if cookies_file == COOKIES_FILE else "variavel de ambiente"
         return {
@@ -641,6 +690,7 @@ def get_runtime_config() -> dict[str, Any]:
             "default_browser": "none",
             "browser_options": [{"value": "none", "label": "Usar cookies"}],
             "cookie_help": f"Cookies carregados via {cookie_source}. O backend usara esses cookies para YouTube e Instagram.",
+            "cookie_status": cookie_status,
             "info_cache_ttl_seconds": INFO_CACHE_TTL_SECONDS,
             "info_fetch_timeout_seconds": INFO_FETCH_TIMEOUT_SECONDS,
             "max_concurrent_downloads": MAX_CONCURRENT_DOWNLOADS,
@@ -654,6 +704,7 @@ def get_runtime_config() -> dict[str, Any]:
             "default_browser": "none",
             "browser_options": [{"value": "none", "label": "Sem cookies"}],
             "cookie_help": "O backend esta rodando em container e nao consegue ler os navegadores do host. Use 'Sem cookies' ou monte um backend/cookies.txt para YouTube e Instagram.",
+            "cookie_status": cookie_status,
             "info_cache_ttl_seconds": INFO_CACHE_TTL_SECONDS,
             "info_fetch_timeout_seconds": INFO_FETCH_TIMEOUT_SECONDS,
             "max_concurrent_downloads": MAX_CONCURRENT_DOWNLOADS,
@@ -666,6 +717,7 @@ def get_runtime_config() -> dict[str, Any]:
         "default_browser": "none",
         "browser_options": [{"value": "none", "label": "Sem cookies"}, *KNOWN_BROWSERS],
         "cookie_help": "O app inicia em 'Sem cookies' para reduzir falhas no YouTube. Use cookies do navegador apenas quando YouTube ou Instagram exigirem autenticacao extra.",
+        "cookie_status": cookie_status,
         "info_cache_ttl_seconds": INFO_CACHE_TTL_SECONDS,
         "info_fetch_timeout_seconds": INFO_FETCH_TIMEOUT_SECONDS,
         "max_concurrent_downloads": MAX_CONCURRENT_DOWNLOADS,
