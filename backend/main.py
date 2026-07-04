@@ -1,9 +1,11 @@
 import base64
+import hmac
 import json
 import importlib.util
 import logging
 import os
 import re
+import secrets
 import shutil
 import sqlite3
 import subprocess
@@ -16,7 +18,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -42,6 +44,11 @@ JOB_EVENT_INTERVAL_SECONDS = float(os.getenv("JOB_EVENT_INTERVAL_SECONDS", "0.5"
 YTDLP_REMOTE_COMPONENTS = os.getenv("YTDLP_REMOTE_COMPONENTS", "ejs:github")
 YTDLP_EXTRACTOR_ARGS = os.getenv("YTDLP_EXTRACTOR_ARGS", "").strip()
 YTDLP_FORCE_IPV4 = os.getenv("YTDLP_FORCE_IPV4", "1") == "1"
+APP_USERNAME = os.getenv("APP_USERNAME", "admin")
+APP_PASSWORD = os.getenv("APP_PASSWORD", "")
+APP_SECRET = os.getenv("APP_SECRET") or APP_PASSWORD or secrets.token_urlsafe(32)
+SESSION_COOKIE_NAME = "yt_downloader_session"
+SESSION_MAX_AGE_SECONDS = int(os.getenv("SESSION_MAX_AGE_SECONDS", str(7 * 24 * 60 * 60)))
 
 app.add_middleware(
     CORSMiddleware,
@@ -171,6 +178,85 @@ class DownloadJobRequest(BaseModel):
     format_id: str = "bestvideo+bestaudio/best"
     audio_only: bool = False
     browser: str = "none"
+
+
+class LoginRequest(BaseModel):
+    username: str = "admin"
+    password: str
+
+
+def auth_enabled() -> bool:
+    return bool(APP_PASSWORD)
+
+
+def build_session_token(username: str) -> str:
+    issued_at = str(int(time.time()))
+    payload = f"{username}:{issued_at}"
+    signature = hmac.new(APP_SECRET.encode(), payload.encode(), "sha256").hexdigest()
+    return f"{payload}:{signature}"
+
+
+def verify_session_token(token: str | None) -> bool:
+    if not auth_enabled():
+        return True
+    if not token:
+        return False
+
+    try:
+        username, issued_at, signature = token.split(":", 2)
+        issued_at_int = int(issued_at)
+    except (ValueError, TypeError):
+        return False
+
+    if username != APP_USERNAME:
+        return False
+    if time.time() - issued_at_int > SESSION_MAX_AGE_SECONDS:
+        return False
+
+    payload = f"{username}:{issued_at}"
+    expected = hmac.new(APP_SECRET.encode(), payload.encode(), "sha256").hexdigest()
+    return hmac.compare_digest(signature, expected)
+
+
+def request_is_secure(request: Request) -> bool:
+    forwarded_proto = request.headers.get("x-forwarded-proto", "")
+    host = request.headers.get("host", "")
+    if forwarded_proto == "https":
+        return True
+    return not host.startswith(("localhost", "127.0.0.1"))
+
+
+def set_session_cookie(response: Response, request: Request, username: str) -> None:
+    response.set_cookie(
+        SESSION_COOKIE_NAME,
+        build_session_token(username),
+        max_age=SESSION_MAX_AGE_SECONDS,
+        httponly=True,
+        secure=request_is_secure(request),
+        samesite="lax",
+        path="/",
+    )
+
+
+PROTECTED_PATH_PREFIXES = ("/config", "/info", "/download", "/download-jobs")
+
+
+@app.middleware("http")
+async def require_authentication(request: Request, call_next):
+    if not auth_enabled():
+        return await call_next(request)
+
+    path = request.url.path
+    if path.startswith(PROTECTED_PATH_PREFIXES):
+        token = request.cookies.get(SESSION_COOKIE_NAME)
+        if not verify_session_token(token):
+            return Response(
+                content=json.dumps({"detail": "Login necessario"}),
+                status_code=401,
+                media_type="application/json",
+            )
+
+    return await call_next(request)
 
 
 def now_ts() -> float:
@@ -1523,6 +1609,37 @@ def load_download_jobs_on_startup() -> None:
     ensure_env_cookies_file()
     init_jobs_db()
     load_persisted_jobs()
+
+
+@app.get("/auth/status")
+def auth_status(request: Request):
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    authenticated = verify_session_token(token)
+    return {
+        "enabled": auth_enabled(),
+        "authenticated": authenticated,
+        "username": APP_USERNAME if authenticated and auth_enabled() else None,
+    }
+
+
+@app.post("/auth/login")
+def login(payload: LoginRequest, request: Request, response: Response):
+    if not auth_enabled():
+        return {"authenticated": True, "username": None}
+
+    valid_username = hmac.compare_digest(payload.username, APP_USERNAME)
+    valid_password = hmac.compare_digest(payload.password, APP_PASSWORD)
+    if not valid_username or not valid_password:
+        raise HTTPException(status_code=401, detail="Usuario ou senha invalidos")
+
+    set_session_cookie(response, request, payload.username)
+    return {"authenticated": True, "username": payload.username}
+
+
+@app.post("/auth/logout")
+def logout(response: Response):
+    response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+    return {"authenticated": False}
 
 
 @app.get("/config")

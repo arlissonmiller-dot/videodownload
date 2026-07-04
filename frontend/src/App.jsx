@@ -94,6 +94,11 @@ function buildPresetOptions(info) {
 }
 
 export default function App() {
+  const [authChecked, setAuthChecked] = useState(false);
+  const [authenticated, setAuthenticated] = useState(false);
+  const [loginUsername, setLoginUsername] = useState("admin");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginLoading, setLoginLoading] = useState(false);
   const [url, setUrl] = useState("");
   const [browser, setBrowser] = useState("none");
   const [browserOptions, setBrowserOptions] = useState(DEFAULT_BROWSER_OPTIONS);
@@ -109,9 +114,47 @@ export default function App() {
   useEffect(() => {
     let ignore = false;
 
+    async function checkAuth() {
+      try {
+        const res = await fetch(buildApiUrl("/auth/status"), {
+          credentials: "include",
+        });
+        if (!res.ok) throw new Error("Nao foi possivel verificar o login");
+
+        const data = await res.json();
+        if (ignore) return;
+
+        setAuthenticated(!data.enabled || Boolean(data.authenticated));
+        if (data.username) {
+          setLoginUsername(data.username);
+        }
+      } catch {
+        if (ignore) return;
+        setAuthenticated(false);
+      } finally {
+        if (!ignore) {
+          setAuthChecked(true);
+        }
+      }
+    }
+
+    checkAuth();
+
+    return () => {
+      ignore = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!authenticated) return undefined;
+
+    let ignore = false;
+
     async function loadConfig() {
       try {
-        const res = await fetch(buildApiUrl("/config"));
+        const res = await fetch(buildApiUrl("/config"), {
+          credentials: "include",
+        });
         if (!res.ok) return;
 
         const data = await res.json();
@@ -133,7 +176,7 @@ export default function App() {
     return () => {
       ignore = true;
     };
-  }, []);
+  }, [authenticated]);
 
   useEffect(() => {
     if (!downloadJob?.id || FINAL_JOB_STATUSES.has(downloadJob.status)) return undefined;
@@ -210,7 +253,9 @@ export default function App() {
         url: url.trim(),
         browser,
       });
-      const res = await fetch(buildApiUrl(`/info?${params}`));
+      const res = await fetch(buildApiUrl(`/info?${params}`), {
+        credentials: "include",
+      });
       if (!res.ok) throw new Error(await getErrorMessage(res, "Erro ao buscar opcoes"));
 
       const data = await res.json();
@@ -229,6 +274,7 @@ export default function App() {
     try {
       const res = await fetch(buildApiUrl("/download-jobs"), {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
         },
@@ -248,18 +294,117 @@ export default function App() {
     }
   }
 
+  async function handleLogin(event) {
+    event.preventDefault();
+    setLoginLoading(true);
+    setError(null);
+
+    try {
+      const res = await fetch(buildApiUrl("/auth/login"), {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          username: loginUsername.trim() || "admin",
+          password: loginPassword,
+        }),
+      });
+
+      if (!res.ok) throw new Error(await getErrorMessage(res, "Login invalido"));
+      setLoginPassword("");
+      setAuthenticated(true);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoginLoading(false);
+    }
+  }
+
+  async function handleLogout() {
+    await fetch(buildApiUrl("/auth/logout"), {
+      method: "POST",
+      credentials: "include",
+    });
+    setAuthenticated(false);
+    setInfo(null);
+    setDownloadJob(null);
+    setError(null);
+  }
+
   const presets = buildPresetOptions(info);
   const activeDownloadKey = downloadJob
     ? `${downloadJob.audio_only ? "mp3" : downloadJob.format_id}`
     : null;
   const isDownloadActive = downloadJob && !FINAL_JOB_STATUSES.has(downloadJob.status);
 
+  if (!authChecked) {
+    return (
+      <main className="app-shell">
+        <section className="panel auth-panel">
+          <div className="hero">
+            <h1>Baixar video</h1>
+            <p>Verificando acesso...</p>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  if (!authenticated) {
+    return (
+      <main className="app-shell">
+        <section className="panel auth-panel">
+          <div className="hero">
+            <h1>Baixar video</h1>
+            <p>Acesso pessoal protegido por senha.</p>
+          </div>
+
+          <form className="login-form" onSubmit={handleLogin}>
+            <input
+              type="text"
+              className="url-input"
+              value={loginUsername}
+              onChange={(event) => setLoginUsername(event.target.value)}
+              autoComplete="username"
+              required
+            />
+            <input
+              type="password"
+              className="url-input"
+              placeholder="Senha"
+              value={loginPassword}
+              onChange={(event) => setLoginPassword(event.target.value)}
+              autoComplete="current-password"
+              required
+            />
+            <button type="submit" className="btn btn-primary" disabled={loginLoading}>
+              {loginLoading ? <span className="spinner" /> : "Entrar"}
+            </button>
+          </form>
+
+          {error && (
+            <div className="message message-error">
+              <strong>Erro:</strong> {error}
+            </div>
+          )}
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="app-shell">
       <section className="panel">
-        <div className="hero">
-          <h1>Baixar video</h1>
-          <p>YouTube ou Instagram. Cole o link, carregue as opcoes e baixe.</p>
+        <div className="hero hero-with-action">
+          <div>
+            <h1>Baixar video</h1>
+            <p>YouTube ou Instagram. Cole o link, carregue as opcoes e baixe.</p>
+          </div>
+          <button type="button" className="btn btn-ghost" onClick={handleLogout}>
+            Sair
+          </button>
         </div>
 
         <form className="search-form" onSubmit={handleFetchInfo}>

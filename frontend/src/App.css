@@ -60,6 +60,13 @@ a {
   margin-bottom: 20px;
 }
 
+.hero-with-action {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
 .hero h1 {
   font-size: 2rem;
   margin-bottom: 8px;
@@ -73,6 +80,15 @@ a {
 .search-form {
   display: grid;
   gap: 12px;
+}
+
+.login-form {
+  display: grid;
+  gap: 12px;
+}
+
+.auth-panel {
+  max-width: 480px;
 }
 
 .url-input,
@@ -127,6 +143,15 @@ a {
   padding: 14px 20px;
   background: var(--accent);
   color: #fff;
+}
+
+.btn-ghost {
+  min-height: 40px;
+  padding: 10px 14px;
+  background: #11151a;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
 .btn-download {
@@ -334,6 +359,10 @@ a {
   .panel {
     padding: 18px;
     border-radius: 16px;
+  }
+
+  .hero-with-action {
+    flex-direction: column;
   }
 
   .toolbar,
