@@ -1,3 +1,4 @@
+import base64
 import json
 import importlib.util
 import logging
@@ -54,6 +55,7 @@ DOWNLOADS_DIR.mkdir(exist_ok=True)
 JOBS_DB_PATH = APP_DIR / "jobs.db"
 
 COOKIES_FILE = APP_DIR / "cookies.txt"
+ENV_COOKIES_FILE = Path(tempfile.gettempdir()) / "yt-dlp-cookies.txt"
 KNOWN_BROWSERS = [
     {"value": "safari", "label": "Safari"},
     {"value": "chrome", "label": "Chrome"},
@@ -85,6 +87,33 @@ info_cache_lock = threading.Lock()
 download_jobs: dict[str, dict[str, Any]] = {}
 download_jobs_lock = threading.Lock()
 download_semaphore = threading.BoundedSemaphore(MAX_CONCURRENT_DOWNLOADS)
+
+
+def ensure_env_cookies_file() -> Path | None:
+    raw_cookies = os.getenv("YTDLP_COOKIES_CONTENT")
+    encoded_cookies = os.getenv("YTDLP_COOKIES_BASE64")
+
+    if not raw_cookies and encoded_cookies:
+        try:
+            raw_cookies = base64.b64decode(encoded_cookies).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            logger.warning("YTDLP_COOKIES_BASE64 is invalid and will be ignored")
+            return None
+
+    if not raw_cookies:
+        return None
+
+    ENV_COOKIES_FILE.write_text(raw_cookies.strip() + "\n")
+    ENV_COOKIES_FILE.chmod(0o600)
+    return ENV_COOKIES_FILE
+
+
+def get_cookies_file() -> Path | None:
+    if COOKIES_FILE.exists():
+        return COOKIES_FILE
+    if ENV_COOKIES_FILE.exists():
+        return ENV_COOKIES_FILE
+    return ensure_env_cookies_file()
 
 
 class DownloadJobRequest(BaseModel):
@@ -604,12 +633,14 @@ def is_running_in_container() -> bool:
 
 
 def get_runtime_config() -> dict[str, Any]:
-    if COOKIES_FILE.exists():
+    cookies_file = get_cookies_file()
+    if cookies_file:
+        cookie_source = "backend/cookies.txt" if cookies_file == COOKIES_FILE else "variavel de ambiente"
         return {
             "cookie_mode": "file",
             "default_browser": "none",
-            "browser_options": [{"value": "none", "label": "Usar cookies.txt"}],
-            "cookie_help": "Arquivo backend/cookies.txt detectado. O backend usara esse arquivo para autenticar as requisicoes em servicos como YouTube e Instagram.",
+            "browser_options": [{"value": "none", "label": "Usar cookies"}],
+            "cookie_help": f"Cookies carregados via {cookie_source}. O backend usara esses cookies para YouTube e Instagram.",
             "info_cache_ttl_seconds": INFO_CACHE_TTL_SECONDS,
             "info_fetch_timeout_seconds": INFO_FETCH_TIMEOUT_SECONDS,
             "max_concurrent_downloads": MAX_CONCURRENT_DOWNLOADS,
@@ -645,9 +676,10 @@ def get_runtime_config() -> dict[str, Any]:
 
 def cookie_args(browser: str) -> list[str]:
     config = get_runtime_config()
+    cookies_file = get_cookies_file()
 
-    if COOKIES_FILE.exists():
-        return ["--cookies", str(COOKIES_FILE)]
+    if cookies_file:
+        return ["--cookies", str(cookies_file)]
 
     if config["cookie_mode"] == "none" and browser != "none":
         raise HTTPException(
@@ -674,7 +706,7 @@ def run_yt_dlp(cmd: list[str], timeout: int) -> subprocess.CompletedProcess[str]
 
 
 def should_retry_without_browser_cookies(browser: str, stderr: str) -> bool:
-    if browser == "none" or COOKIES_FILE.exists():
+    if browser == "none" or get_cookies_file():
         return False
 
     stderr_lower = (stderr or "").lower()
@@ -1422,6 +1454,7 @@ def create_download_job(payload: DownloadJobRequest) -> dict[str, Any]:
 
 @app.on_event("startup")
 def load_download_jobs_on_startup() -> None:
+    ensure_env_cookies_file()
     init_jobs_db()
     load_persisted_jobs()
 
