@@ -8,6 +8,7 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     proxy: {
+      "/auth": "http://localhost:8000",
       "/config": "http://localhost:8000",
       "/info": "http://localhost:8000",
       "/download-jobs": "http://localhost:8000",

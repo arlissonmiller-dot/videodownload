@@ -49,10 +49,13 @@ APP_PASSWORD = os.getenv("APP_PASSWORD", "")
 APP_SECRET = os.getenv("APP_SECRET") or APP_PASSWORD or secrets.token_urlsafe(32)
 SESSION_COOKIE_NAME = "yt_downloader_session"
 SESSION_MAX_AGE_SECONDS = int(os.getenv("SESSION_MAX_AGE_SECONDS", str(7 * 24 * 60 * 60)))
+SESSION_COOKIE_SAMESITE = os.getenv("SESSION_COOKIE_SAMESITE", "lax").lower()
+CORS_ALLOW_CREDENTIALS = os.getenv("CORS_ALLOW_CREDENTIALS", "1") == "1"
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[origin.strip() for origin in CORS_ORIGINS.split(",") if origin.strip()],
+    allow_credentials=CORS_ALLOW_CREDENTIALS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -219,11 +222,23 @@ def verify_session_token(token: str | None) -> bool:
 
 
 def request_is_secure(request: Request) -> bool:
-    forwarded_proto = request.headers.get("x-forwarded-proto", "")
+    forwarded_proto = request.headers.get("x-forwarded-proto", "").lower()
     host = request.headers.get("host", "")
     if forwarded_proto == "https":
         return True
+    if forwarded_proto == "http":
+        return False
     return not host.startswith(("localhost", "127.0.0.1"))
+
+
+def get_session_cookie_samesite(request: Request) -> str:
+    if SESSION_COOKIE_SAMESITE in {"lax", "strict", "none"}:
+        return SESSION_COOKIE_SAMESITE
+
+    if request_is_secure(request) and request.headers.get("origin"):
+        return "none"
+
+    return "lax"
 
 
 def set_session_cookie(response: Response, request: Request, username: str) -> None:
@@ -233,7 +248,7 @@ def set_session_cookie(response: Response, request: Request, username: str) -> N
         max_age=SESSION_MAX_AGE_SECONDS,
         httponly=True,
         secure=request_is_secure(request),
-        samesite="lax",
+        samesite=get_session_cookie_samesite(request),
         path="/",
     )
 

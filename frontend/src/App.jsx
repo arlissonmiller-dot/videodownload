@@ -186,7 +186,9 @@ export default function App() {
       eventSourceRef.current = null;
     }
 
-    const source = new EventSource(buildApiUrl(`/download-jobs/${downloadJob.id}/events`));
+    const source = new EventSource(buildApiUrl(`/download-jobs/${downloadJob.id}/events`), {
+      withCredentials: true,
+    });
     eventSourceRef.current = source;
 
     source.onmessage = (event) => {
@@ -460,7 +462,9 @@ export default function App() {
             {downloadJob.status === "completed" && downloadJob.file_url && (
               <div className="download-link">
                 Se o download nao iniciar sozinho,{" "}
-                <a href={buildApiUrl(downloadJob.file_url)}>clique aqui</a>.
+                <a href={buildApiUrl(downloadJob.file_url)} download>
+                  clique aqui
+                </a>.
               </div>
             )}
           </div>
