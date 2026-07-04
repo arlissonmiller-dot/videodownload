@@ -40,6 +40,8 @@ MAX_CONCURRENT_DOWNLOADS = int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "2"))
 JOB_TTL_SECONDS = int(os.getenv("JOB_TTL_SECONDS", "3600"))
 JOB_EVENT_INTERVAL_SECONDS = float(os.getenv("JOB_EVENT_INTERVAL_SECONDS", "0.5"))
 YTDLP_REMOTE_COMPONENTS = os.getenv("YTDLP_REMOTE_COMPONENTS", "ejs:github")
+YTDLP_EXTRACTOR_ARGS = os.getenv("YTDLP_EXTRACTOR_ARGS", "").strip()
+YTDLP_FORCE_IPV4 = os.getenv("YTDLP_FORCE_IPV4", "1") == "1"
 
 app.add_middleware(
     CORSMiddleware,
@@ -234,11 +236,17 @@ def has_local_ejs_package() -> bool:
 def get_yt_dlp_runtime_args() -> list[str]:
     args: list[str] = []
 
+    if YTDLP_FORCE_IPV4:
+        args.append("--force-ipv4")
+
     if has_node_runtime():
         args.extend(["--js-runtimes", "node"])
 
     if not has_local_ejs_package() and YTDLP_REMOTE_COMPONENTS:
         args.extend(["--remote-components", YTDLP_REMOTE_COMPONENTS])
+
+    if YTDLP_EXTRACTOR_ARGS:
+        args.extend(["--extractor-args", YTDLP_EXTRACTOR_ARGS])
 
     return args
 
@@ -311,14 +319,14 @@ def summarize_yt_dlp_error(detail: str, browser: str) -> str:
         if browser == "none":
             return (
                 "A plataforma bloqueou esta requisicao com verificacao anti-bot. "
-                "Tente novamente escolhendo um navegador com cookies, ou forneca um arquivo "
-                "`backend/cookies.txt` exportado da sua conta."
+                "No Railway, configure `YTDLP_COOKIES_BASE64` com cookies atuais. "
+                "Se ja estiver configurado, o YouTube provavelmente bloqueou o IP do servidor."
             )
 
         return (
             "A plataforma ainda bloqueou esta requisicao mesmo com a configuracao atual. "
-            "Feche e reabra o navegador escolhido, faca login no servico correspondente, e tente novamente. "
-            "Se persistir, exporte os cookies para `backend/cookies.txt`."
+            "Confirme se os cookies estao atuais e pertencem a uma conta que consegue abrir o video. "
+            "Se persistir no Railway, o YouTube provavelmente bloqueou o IP do servidor."
         )
 
     if "unable to fetch gvs po token" in detail_lower or "visitor data" in detail_lower:
@@ -696,6 +704,8 @@ def get_runtime_config() -> dict[str, Any]:
             "max_concurrent_downloads": MAX_CONCURRENT_DOWNLOADS,
             "js_runtime": "node" if has_node_runtime() else "indisponivel",
             "challenge_solver": "local" if has_local_ejs_package() else YTDLP_REMOTE_COMPONENTS,
+            "yt_dlp_force_ipv4": YTDLP_FORCE_IPV4,
+            "yt_dlp_extractor_args": bool(YTDLP_EXTRACTOR_ARGS),
         }
 
     if is_running_in_container():
@@ -710,6 +720,8 @@ def get_runtime_config() -> dict[str, Any]:
             "max_concurrent_downloads": MAX_CONCURRENT_DOWNLOADS,
             "js_runtime": "node" if has_node_runtime() else "indisponivel",
             "challenge_solver": "local" if has_local_ejs_package() else YTDLP_REMOTE_COMPONENTS,
+            "yt_dlp_force_ipv4": YTDLP_FORCE_IPV4,
+            "yt_dlp_extractor_args": bool(YTDLP_EXTRACTOR_ARGS),
         }
 
     return {
@@ -723,6 +735,8 @@ def get_runtime_config() -> dict[str, Any]:
         "max_concurrent_downloads": MAX_CONCURRENT_DOWNLOADS,
         "js_runtime": "node" if has_node_runtime() else "indisponivel",
         "challenge_solver": "local" if has_local_ejs_package() else YTDLP_REMOTE_COMPONENTS,
+        "yt_dlp_force_ipv4": YTDLP_FORCE_IPV4,
+        "yt_dlp_extractor_args": bool(YTDLP_EXTRACTOR_ARGS),
     }
 
 
